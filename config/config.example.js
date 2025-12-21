@@ -20,6 +20,13 @@ const config = {
 
   // 📊 Redis配置
   redis: {
+    // 可选：连接字符串（Zeabur 等平台常提供 REDIS_CONNECTION_STRING / REDIS_URI）
+    url:
+      process.env.REDIS_CONNECTION_STRING ||
+      process.env.REDIS_URI ||
+      process.env.REDIS_URL ||
+      process.env.REDIS_TLS_URL ||
+      '',
     host: process.env.REDIS_HOST || '127.0.0.1',
     port: parseInt(process.env.REDIS_PORT) || 6379,
     password: process.env.REDIS_PASSWORD || '',

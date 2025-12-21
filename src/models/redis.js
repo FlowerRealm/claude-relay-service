@@ -2,6 +2,41 @@ const Redis = require('ioredis')
 const config = require('../../config/config')
 const logger = require('../utils/logger')
 
+function resolveRedisConnectionString() {
+  if (typeof config?.redis?.url === 'string' && config.redis.url.trim() !== '') {
+    return { source: 'config.redis.url', value: config.redis.url.trim() }
+  }
+
+  const candidates = [
+    ['REDIS_CONNECTION_STRING', process.env.REDIS_CONNECTION_STRING],
+    ['REDIS_URI', process.env.REDIS_URI],
+    ['REDIS_URL', process.env.REDIS_URL],
+    ['REDIS_TLS_URL', process.env.REDIS_TLS_URL]
+  ]
+
+  for (const [source, value] of candidates) {
+    if (typeof value === 'string' && value.trim() !== '') {
+      return { source, value: value.trim() }
+    }
+  }
+
+  return null
+}
+
+function getSafeRedisTargetFromUrl(redisUrl) {
+  try {
+    const parsed = new URL(redisUrl)
+    const host = parsed.hostname || 'unknown'
+    const port = parsed.port || '6379'
+    const dbFromPath = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname.slice(1) : ''
+    const tlsFromUrl = parsed.protocol === 'rediss:'
+
+    return { host, port, dbFromPath, tlsFromUrl }
+  } catch {
+    return { host: 'invalid', port: 'invalid', dbFromPath: '', tlsFromUrl: false }
+  }
+}
+
 // 时区辅助函数
 // 注意：这个函数的目的是获取某个时间点在目标时区的"本地"表示
 // 例如：UTC时间 2025-07-30 01:00:00 在 UTC+8 时区表示为 2025-07-30 09:00:00
@@ -70,16 +105,43 @@ class RedisClient {
 
   async connect() {
     try {
-      this.client = new Redis({
-        host: config.redis.host,
-        port: config.redis.port,
-        password: config.redis.password,
-        db: config.redis.db,
+      const resolvedRedisUrl = resolveRedisConnectionString()
+      const baseOptions = {
         retryDelayOnFailover: config.redis.retryDelayOnFailover,
         maxRetriesPerRequest: config.redis.maxRetriesPerRequest,
         lazyConnect: config.redis.lazyConnect,
-        tls: config.redis.enableTLS ? {} : false
-      })
+        connectTimeout: config.redis.connectTimeout,
+        commandTimeout: config.redis.commandTimeout
+      }
+
+      if (resolvedRedisUrl) {
+        const { host, port, dbFromPath, tlsFromUrl } = getSafeRedisTargetFromUrl(
+          resolvedRedisUrl.value
+        )
+        const enableTLS = tlsFromUrl || config.redis.enableTLS
+
+        logger.info(
+          `🔧 Redis config (${resolvedRedisUrl.source}): ${host}:${port}${dbFromPath ? `/${dbFromPath}` : ''}, TLS=${enableTLS ? 'on' : 'off'}`
+        )
+
+        this.client = new Redis(resolvedRedisUrl.value, {
+          ...baseOptions,
+          tls: enableTLS ? {} : false
+        })
+      } else {
+        logger.info(
+          `🔧 Redis config (host/port): ${config.redis.host}:${config.redis.port}/${config.redis.db}, TLS=${config.redis.enableTLS ? 'on' : 'off'}`
+        )
+
+        this.client = new Redis({
+          host: config.redis.host,
+          port: config.redis.port,
+          password: config.redis.password,
+          db: config.redis.db,
+          ...baseOptions,
+          tls: config.redis.enableTLS ? {} : false
+        })
+      }
 
       this.client.on('connect', () => {
         this.isConnected = true
