@@ -2,6 +2,54 @@ const Redis = require('ioredis')
 const config = require('../../config/config')
 const logger = require('../utils/logger')
 
+function normalizeZeaburInternalHostname(hostname) {
+  if (typeof hostname !== 'string') {
+    return hostname
+  }
+
+  const trimmed = hostname.trim()
+  const environmentId = process.env.ZEABUR_ENVIRONMENT_ID
+
+  // Zeabur 私网域名实际记录在 `*.environment-<envId>.zeabur.internal` 下。
+  // 在某些运行环境中，`redis.zeabur.internal` 可能无法依赖 resolv.conf 的 search domain 自动补全，导致 ENOTFOUND。
+  // 这里在已知运行于 Zeabur 时做显式补全，提升稳定性。
+  if (!environmentId || !trimmed.endsWith('.zeabur.internal')) {
+    return trimmed
+  }
+
+  const zeaburFqdnSuffix = `.environment-${environmentId}.zeabur.internal`
+  if (trimmed.endsWith(zeaburFqdnSuffix)) {
+    return trimmed
+  }
+
+  return `${trimmed}${zeaburFqdnSuffix}`
+}
+
+function normalizeRedisUrlForZeabur(redisUrl) {
+  if (typeof redisUrl !== 'string') {
+    return redisUrl
+  }
+
+  const trimmed = redisUrl.trim()
+  if (trimmed === '' || !process.env.ZEABUR_ENVIRONMENT_ID) {
+    return trimmed
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    const normalizedHost = normalizeZeaburInternalHostname(parsed.hostname)
+
+    if (normalizedHost !== parsed.hostname) {
+      parsed.hostname = normalizedHost
+      return parsed.toString()
+    }
+
+    return trimmed
+  } catch {
+    return trimmed
+  }
+}
+
 function resolveRedisConnectionString() {
   if (typeof config?.redis?.url === 'string' && config.redis.url.trim() !== '') {
     return { source: 'config.redis.url', value: config.redis.url.trim() }
@@ -115,26 +163,34 @@ class RedisClient {
       }
 
       if (resolvedRedisUrl) {
-        const { host, port, dbFromPath, tlsFromUrl } = getSafeRedisTargetFromUrl(
-          resolvedRedisUrl.value
-        )
+        const normalizedRedisUrl = normalizeRedisUrlForZeabur(resolvedRedisUrl.value)
+        if (normalizedRedisUrl !== resolvedRedisUrl.value) {
+          logger.info('🔧 Zeabur DNS: expanded Redis URL hostname for reliable resolution')
+        }
+
+        const { host, port, dbFromPath, tlsFromUrl } = getSafeRedisTargetFromUrl(normalizedRedisUrl)
         const enableTLS = tlsFromUrl || config.redis.enableTLS
 
         logger.info(
           `🔧 Redis config (${resolvedRedisUrl.source}): ${host}:${port}${dbFromPath ? `/${dbFromPath}` : ''}, TLS=${enableTLS ? 'on' : 'off'}`
         )
 
-        this.client = new Redis(resolvedRedisUrl.value, {
+        this.client = new Redis(normalizedRedisUrl, {
           ...baseOptions,
           tls: enableTLS ? {} : false
         })
       } else {
+        const normalizedHost = normalizeZeaburInternalHostname(config.redis.host)
+        if (normalizedHost !== config.redis.host) {
+          logger.info('🔧 Zeabur DNS: expanded Redis host for reliable resolution')
+        }
+
         logger.info(
-          `🔧 Redis config (host/port): ${config.redis.host}:${config.redis.port}/${config.redis.db}, TLS=${config.redis.enableTLS ? 'on' : 'off'}`
+          `🔧 Redis config (host/port): ${normalizedHost}:${config.redis.port}/${config.redis.db}, TLS=${config.redis.enableTLS ? 'on' : 'off'}`
         )
 
         this.client = new Redis({
-          host: config.redis.host,
+          host: normalizedHost,
           port: config.redis.port,
           password: config.redis.password,
           db: config.redis.db,
