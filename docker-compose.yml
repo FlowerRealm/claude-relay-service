@@ -35,8 +35,8 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       
       # 📊 Redis 配置
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_HOST=${REDIS_HOST:-}
+      - REDIS_PORT=${REDIS_PORT:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
       - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-}
