@@ -1,10 +1,33 @@
 const path = require('path')
 require('dotenv').config()
 
+function resolveZeaburServicePort() {
+  const zeaburServiceId = process.env.ZEABUR_SERVICE_ID
+  if (!zeaburServiceId) {
+    return null
+  }
+
+  const key = `SERVICE_${zeaburServiceId.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}_SERVICE_PORT`
+  const parsed = parseInt(process.env[key], 10)
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function resolveServerPort() {
+  // Zeabur：PORT 可能被设置为 8080（容器内部监听端口），但对外/路由端口通常是 Service Port（如 3000）。
+  // 优先使用 Zeabur 注入的 Service Port，避免域名访问 502。
+  const zeaburServicePort = resolveZeaburServicePort()
+  if (zeaburServicePort) {
+    return zeaburServicePort
+  }
+
+  return parseInt(process.env.PORT) || 3000
+}
+
 const config = {
   // 🌐 服务器配置
   server: {
-    port: parseInt(process.env.PORT) || 3000,
+    port: resolveServerPort(),
     host: process.env.HOST || '0.0.0.0',
     nodeEnv: process.env.NODE_ENV || 'development',
     trustProxy: process.env.TRUST_PROXY === 'true'
